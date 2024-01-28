@@ -3,14 +3,19 @@
 
 from microbit import display, button_a, button_b, pin1, sleep
 from radio import on, config, receive, send
+from music import play
 import music
 
-
-DEFAULT_SCROLL_DELAY = 200
-DEFAULT_CHANNEL = 25
-DEFAULT_POWER = 7
-DEFAULT_SEPERATOR = "_:_"
-
+DEFAULT_SCROLL_DELAY_MS = 200  # Range: 0-
+DEFAULT_CHANNEL_LEN = 5  # Range 1-7
+DEFAULT_CHANNEL = 25  # Range: 0-255
+DEFAULT_POWER = 7  # Range: 1-7
+DEFAULT_SEPARATOR = "_:_"
+DEFAULT_TICK_MS = 100  # Range: 0-
+USE_LIGHTS = True
+USE_MUSIC = True
+DEFAULT_MSG_RECEIVED_TUNE = music.JUMP_UP
+DEFAULT_MSG_SENT_TUNE = music.JUMP_DOWN
 MORSE_DICT = {
     "A": ".-",
     "B": "-...",
@@ -51,7 +56,7 @@ MORSE_DICT = {
     "8": "---..",
     "9": "----.",
     "0": "-----",
-    ", ": "--..--",
+    ",": "--..--",
     ".": ".-.-.-",
     "?": "..--..",
     "/": "-..-.",
@@ -61,7 +66,7 @@ MORSE_DICT = {
 }
 
 
-def get_channel(len: int = 5):
+def get_channel(len: int = DEFAULT_CHANNEL_LEN):
     """
     Gets radio channel from user input. Allows for binary input (A: 0, B:
     1) with length `len` (default: 5). If the first binary input is A,
@@ -75,10 +80,10 @@ def get_channel(len: int = 5):
     """
 
     display.scroll(
-        "Set channel",
+        "SET CHANNEL",
         loop=True,
         wait=False,
-        delay=DEFAULT_SCROLL_DELAY,
+        delay=DEFAULT_SCROLL_DELAY_MS,
     )
     binary = []
 
@@ -88,6 +93,7 @@ def get_channel(len: int = 5):
         if button_a.was_pressed():
             return DEFAULT_CHANNEL
         elif button_b.was_pressed():
+            # Stop the scrolling "SET CHANNEL" message by replacing it with nothing
             display.scroll("")
             break
 
@@ -112,12 +118,11 @@ def setup_radio():
     """Sets up the radio channel according to user input"""
     on()  # Activate the radio
     channel = get_channel()
-    # Set channel to `channel` and power level to `DEFAULT_POWER`
-    # (default: 7)
+    # Set channel to `channel` and power level to `DEFAULT_POWER` (default: 7)
     config(group=channel, power=DEFAULT_POWER)
 
     display.clear()
-    display.scroll(channel, delay=DEFAULT_SCROLL_DELAY)
+    display.scroll(channel, delay=DEFAULT_SCROLL_DELAY_MS)
 
 
 def get_data():
@@ -138,6 +143,7 @@ def display_empty(width: int = 5, height: int = 5):
     :returns:
         - True - If the screen is empty
         - False - If the screen isn't empty
+    :rtype: bool
     """
 
     for x in range(width):
@@ -164,7 +170,7 @@ def morse_decipher(input_: str):
     if all(char not in input_ for char in [".", "-"]):
         return input_
 
-    # Add extra space to the input to mark its end
+    # Add extra space to input to mark its end
     input_ += " "
 
     decipher = ""
@@ -182,23 +188,25 @@ def morse_decipher(input_: str):
             # Increment space amount by one
             spaces += 1
 
-            # Two consecutive spaces mean a new word
+            # Two consecutive spaces means a new word
             if spaces == 2:
                 # Add space to indicate the end of the word
                 decipher += " "
                 spaces = 0
             else:
                 try:
-                    # Access the keys using their values
+                    # Access the keys using their values, and add the deciphered result to the deciphered text
                     decipher += list(MORSE_DICT.keys())[
                         list(MORSE_DICT.values()).index(word)
                     ]
                 except ValueError:
+                    pass
+                except:
                     return input_
 
                 word = ""
 
-    return decipher if decipher != "" else input_
+    return decipher
 
 
 if __name__ == "__main__":
@@ -206,60 +214,69 @@ if __name__ == "__main__":
 
     queue = []
 
-    currently_pressing_a_b = False
     local_message = ""
     while True:
         # Turn off an eventual unit connected to pin 1, most probably a lamp
-        if display_empty() and pin1.is_touched():
+        if USE_LIGHTS and display_empty():
             pin1.write_digital(0)
 
         received_data = get_data()  # Receives data on `channel`
         if received_data:
             queue.append(received_data)
         if queue and display_empty():
-            # Seperate all messages with `DEFAULT_SEPERATOR` (default:
+            # Turn on an eventual light on pin 0, if `USE`
+            if USE_LIGHTS:
+                pin1.write_digital(1)
+
+            # Play chosen music, if `USE_MUSIC` is True
+            if USE_MUSIC:
+                play(DEFAULT_MSG_RECEIVED_TUNE, wait=False)
+
+            # Separate all messages with `DEFAULT_SEPARATOR` (default:
             # "_:_")
-            message = str(morse_decipher(queue[0])) + DEFAULT_SEPERATOR
+            message = str(morse_decipher(queue[0])) + DEFAULT_SEPARATOR
             # The display can never be empty, since that would trigger
             # `display_empty()`, allowing for another message to replace
             # the current one. Therefore, we have to replace all spaces
             # with underscores (_).
             message = message.replace(" ", "_")
 
-            # Turn on an eventual light on pin 0
-            if pin1.is_touched():
-                pin1.write_digital(1)
-
-            music.play(music.JUMP_UP, wait=False)
-
             display.scroll(
                 message,
                 wait=False,
-                delay=DEFAULT_SCROLL_DELAY,
+                delay=DEFAULT_SCROLL_DELAY_MS,
             )
             queue.pop(0)
 
         # If A and B are pressed, add " " to message
         if button_a.is_pressed() and button_b.is_pressed():
-            currently_pressing_a_b = True
             local_message += " "
+            display.scroll("_ :" + morse_decipher(local_message) + ":", wait=False)
+            sleep(2 * DEFAULT_TICK_MS)
         # If A is pressed, add "." to message
-        elif button_a.was_pressed():
-            local_message += "."
-            display.scroll(":" + local_message + ":")
+        elif button_a.is_pressed():
+            char = "."
+            local_message += char
+            display.scroll(
+                char + " :" + morse_decipher(local_message) + ":", wait=False
+            )
+            sleep(DEFAULT_TICK_MS)
         # If B is pressed, add "-" to message
-        elif button_b.was_pressed():
-            local_message += "-"
-
-        if (
-            not button_a.is_pressed()
-            and not button_b.is_pressed()
-            and currently_pressing_a_b
-        ):
-            currently_pressing_a_b = False
+        elif button_b.is_pressed():
+            char = "-"
+            local_message += char
+            display.scroll(
+                char + " :" + morse_decipher(local_message) + ":", wait=False
+            )
+            sleep(DEFAULT_TICK_MS)
 
         # If A and B are pressed three times in a row, send message
         if local_message[-3:] == 3 * " ":
-            music.play(music.JUMP_DOWN, wait=False)
-            send(local_message[:-3])
+            if USE_MUSIC:
+                play(DEFAULT_MSG_SENT_TUNE, wait=False)
+            send(
+                local_message[:-3]
+            )  # Send message minus the three last character (spaces)
             local_message = ""
+
+        sleep(DEFAULT_TICK_MS)
